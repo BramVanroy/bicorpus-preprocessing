@@ -15,16 +15,24 @@ if __name__ == '__main__':
     cparser.add_argument('--src_model', help='Source spaCy model', default='en_core_web_sm')
     cparser.add_argument('-t', '--tgt_lang', help='Target language (abbreviation)', default='nl')
     cparser.add_argument('--tgt_model', help='Target spaCy model', default='nl_core_news_sm')
-    cparser.add_argument('-b', '--batch_size', help='Batch size (in kB) for the chunker', default=1000)
+    cparser.add_argument('-b', '--batch_size', help='Batch size (in kB) for the chunker', default=1000, type=int)
     cparser.add_argument('--tokenize', action='store_true', help='Tokenize the output')
-    cparser.add_argument('--max_length', help='Maximal number of tokens in a sentence that only consist of'
-                                              ' alphanumeric characters (and not only digits)')
-    cparser.add_argument('--min_length', help='Minimal number of tokens in a sentence that only consist of'
-                                              ' alphanumeric characters (and not only digits)')
-    cparser.add_argument('--max_ratio', help='Maximal ratio of numbers of tokens in source and target sentence')
-    cparser.add_argument('-n', '--n_workers', help='Total number of workers'
-                                                   ' (reader and writer processes added on top of this number).'
-                                                   ' Default depends on your hardware', default=cpu_count()-1)
+    cparser.add_argument('--max_length',
+                         help='Maximal number of tokens in a sentence that only consist of alphanumeric'
+                              ' characters (and not only digits)',
+                         type=int)
+    cparser.add_argument('--min_length',
+                         help='Minimal number of tokens in a sentence that only consist of alphanumeric'
+                              ' characters (and not only digits)',
+                         type=int)
+    cparser.add_argument('--max_ratio',
+                         help='Maximal ratio of numbers of tokens in source and target sentence',
+                         type=int)
+    cparser.add_argument('-n', '--n_workers',
+                         help='Total number of workers (reader and writer processes added on top of this number).'
+                              ' Default depends on your hardware',
+                         default=cpu_count()-1,
+                         type=int)
 
     cargs = cparser.parse_args()
     cargs = vars(cargs)
