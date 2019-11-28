@@ -58,7 +58,7 @@ class Cleaner:
             with Pool(processes=self.n_workers) as pool:
                 jobs = [pool.apply_async(self.worker) for _ in range(self.n_workers)]
 
-                for job_idx, job in enumerate(jobs, 1):
+                for job in jobs:
                     _ = job.get()
 
             # clean-up
@@ -150,13 +150,13 @@ class Cleaner:
 
         n_sentences = 0
         with pf_src.open('w', encoding='utf-8') as fh_src, pf_tgt.open('w', encoding='utf-8') as fh_tgt:
-            n_batch = 0
-
             src_tok_sents = set()
             tgt_tok_sents = set()
 
             results = {}
+            n_batch = 0
             prev_chunk_end = 0
+
             while True:
                 work = self.result_queue.get()
                 if work == 'done':
