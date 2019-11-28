@@ -16,12 +16,14 @@ class Cleaner:
                  src_lang='en',
                  tgt_lang='nl',
                  tokenize=False,
+                 dedupe=False,
                  src_model='en_core_web_sm',
                  tgt_model='nl_core_news_sm',
                  n_workers=cpu_count()-1,
                  max_length=None,
                  min_length=None,
                  max_ratio=None):
+        self.dedupe = dedupe
         self.src_lang = src_lang
         self.tgt_lang = tgt_lang
 
@@ -53,16 +55,11 @@ class Cleaner:
             writer_proc = Process(target=self.writer)
             writer_proc.start()
 
-            total_init_sents = 0
-            total_final_sents = 0
             with Pool(processes=self.n_workers) as pool:
                 jobs = [pool.apply_async(self.worker) for _ in range(self.n_workers)]
 
                 for job_idx, job in enumerate(jobs, 1):
-                    # get initial batch_size and final number of sents
-                    n_init_sents, n_final_sents = job.get()
-                    total_init_sents += n_init_sents
-                    total_final_sents += n_final_sents
+                    _ = job.get()
 
             # clean-up
             reader_proc.join()
@@ -72,8 +69,7 @@ class Cleaner:
             writer_proc.join()
             writer_proc.terminate()
 
-        logging.info(f"Finished process in {datetime.datetime.now() - start_time}."
-                     f" Removed {(total_init_sents-total_final_sents):,} out of {total_init_sents:,} sentences.")
+        logging.info(f"Finished process in {datetime.datetime.now() - start_time}.")
 
     def worker(self):
         # ft_model can't be pickled
@@ -85,8 +81,6 @@ class Cleaner:
         tgt_nlp = spacy.load(self.tgt_model, disable=['ner', 'textcat'])
         tgt_nlp.add_pipe(self._prevent_sbd, name='prevent-sbd', before='parser')
 
-        total_init_sents = 0
-        total_final_sents = 0
         while True:
             # Get work from the working queue
             work = self.work_queue.get()
@@ -94,28 +88,18 @@ class Cleaner:
                 break
 
             chunk_start, chunk_size = work
-            src_sentences, tgt_sentences, batch_size, final_size = self.process_batch(chunk_start,
-                                                                                      chunk_size,
-                                                                                      ft_model,
-                                                                                      src_nlp,
-                                                                                      tgt_nlp)
+            src_sentences, tgt_sentences = self.process_batch(chunk_start, chunk_size, ft_model, src_nlp, tgt_nlp)
             self.result_queue.put((chunk_start, chunk_size, src_sentences, tgt_sentences))
 
-            total_init_sents += batch_size
-            total_final_sents += final_size
-
-        return total_init_sents, total_final_sents
-
-    def process_batch(self, chunk_start, chunk_size, ft_model, src_nlp=None, tgt_nlp=None):
+    def process_batch(self, chunk_start, chunk_size, ft_model, src_nlp=None, tgt_nlp=None, cb=None):
         batch = self.chunker.get_batch(chunk_start, chunk_size)
         src, tgt = zip(*[map(str.strip, l.split('\t')) for l in batch])
-        n_init_sents = len(src)
 
         src = self.lang_processor(src, self.src_lang, ft_model, src_nlp)
         tgt = self.lang_processor(tgt, self.tgt_lang, ft_model, tgt_nlp)
 
-        invalid_idxs = {idx for idx, tupl in enumerate(src) if not tupl[1]}
-        invalid_idxs.update({idx for idx, tupl in enumerate(tgt) if not tupl[1]})
+        invalid_idxs = {idx for idx, tupl in enumerate(src) if not tupl[2]}
+        invalid_idxs.update({idx for idx, tupl in enumerate(tgt) if not tupl[2]})
 
         if invalid_idxs:
             src, tgt = self._delete_idxs(src, tgt, idxs=invalid_idxs)
@@ -123,12 +107,14 @@ class Cleaner:
         if self.max_ratio:
             src, tgt = self.check_ratio(src, tgt)
 
-        n_final_sents = len(src)
+        # remove the 'invalid' bool: now list of tuples: (sent, tok_sent)
+        src = [(s[0], s[1]) for s in src]
+        tgt = [(s[0], s[1]) for s in tgt]
 
-        src_sentences = '\n'.join([s[0] for s in src]) + '\n'
-        tgt_sentences = '\n'.join([s[0] for s in tgt]) + '\n'
+        if cb:
+            src, tgt = cb(src, tgt)
 
-        return src_sentences, tgt_sentences, n_init_sents, n_final_sents
+        return src, tgt
 
     def lang_processor(self, batch, lang, ft_model, nlp=None):
         sentences = []
@@ -136,7 +122,6 @@ class Cleaner:
         for doc in docs:
             for sent in doc.sents:
                 tokens = list(sent)
-                n_tokens = len(tokens)
                 # only count tokens that consist of alphanum chars and not only digits
                 n_valid_tokens = len([t for t in tokens if t.text.isalnum() and not t.is_digit])
                 len_valid = self.min_length <= n_valid_tokens <= self.max_length
@@ -144,24 +129,32 @@ class Cleaner:
                 lang_label, _ = ft_model.predict(sent.text)
                 lang_valid = lang_label[0].replace('__label__', '') == lang
 
+                tokenized_sent = ' '.join([t.text for t in tokens])
+
                 if self.tokenize:
-                    sent = ' '.join([t.text for t in tokens])
+                    sent = tokenized_sent
                 else:
                     sent = sent.text
 
-                sentences.append((sent, len_valid and lang_valid, n_tokens))
+                sentences.append((sent, tokenized_sent, len_valid and lang_valid))
 
         return sentences
 
     def writer(self):
         """ Results are not necessarily returned in order, so use prev_chunk_end
-            to ensure the correct output order. """
+            to ensure the correct output order.
+            TODO: this is messy. Rewrite. """
         pfin = self.chunker.pfin
         pf_src = pfin.with_suffix(f".{self.src_lang}")
         pf_tgt = pfin.with_suffix(f".{self.tgt_lang}")
 
+        n_sentences = 0
         with pf_src.open('w', encoding='utf-8') as fh_src, pf_tgt.open('w', encoding='utf-8') as fh_tgt:
             n_batch = 0
+
+            src_tok_sents = set()
+            tgt_tok_sents = set()
+
             results = {}
             prev_chunk_end = 0
             while True:
@@ -171,10 +164,22 @@ class Cleaner:
                 chunk_start, chunk_size, src_sentences, tgt_sentences = work
                 if prev_chunk_end == chunk_start:
                     n_batch += 1
-                    logging.info(f"Processed batch {n_batch:,}...")
-                    fh_src.write(src_sentences)
-                    fh_tgt.write(tgt_sentences)
                     prev_chunk_end += chunk_size
+
+                    # Optionally filter duplicated sentences (tokenized)
+                    for src_tup, tgt_tup in zip(src_sentences, tgt_sentences):
+                        if not self.dedupe:
+                            fh_src.write(src_tup[0]+'\n')
+                            fh_tgt.write(tgt_tup[1]+'\n')
+                            n_sentences += 1
+                        elif src_tup[1] not in src_tok_sents and tgt_tup[1] not in tgt_tok_sents:
+                            fh_src.write(src_tup[0] + '\n')
+                            fh_tgt.write(tgt_tup[1] + '\n')
+                            src_tok_sents.add(src_tup[1])
+                            tgt_tok_sents.add(tgt_tup[1])
+                            n_sentences += 1
+
+                    logging.info(f"Processed batch {n_batch:,}...")
 
                     # check if existing data in the results follows
                     # the newly added data
@@ -183,10 +188,22 @@ class Cleaner:
                             nxt = results.pop(prev_chunk_end, None)
                             if nxt:
                                 n_batch += 1
-                                logging.info(f"Processed batch {n_batch:,}...")
-                                fh_src.write(nxt['src'])
-                                fh_tgt.write(nxt['tgt'])
                                 prev_chunk_end += nxt['chunk_size']
+
+                                # Optionally filter duplicated sentences (tokenized)
+                                for src_tup, tgt_tup in zip(nxt['src'], nxt['tgt']):
+                                    if not self.dedupe:
+                                        fh_src.write(src_tup[0] + '\n')
+                                        fh_tgt.write(tgt_tup[1] + '\n')
+                                        n_sentences += 1
+                                    elif src_tup[1] not in src_tok_sents and tgt_tup[1] not in tgt_tok_sents:
+                                        fh_src.write(src_tup[0] + '\n')
+                                        fh_tgt.write(tgt_tup[1] + '\n')
+                                        src_tok_sents.add(src_tup[1])
+                                        tgt_tok_sents.add(tgt_tup[1])
+                                        n_sentences += 1
+
+                                logging.info(f"Processed batch {n_batch:,}...")
                             else:
                                 break
                 else:
@@ -195,6 +212,9 @@ class Cleaner:
                         'tgt': tgt_sentences,
                         'chunk_size': chunk_size
                     }
+
+        n_removed = self.chunker.n_lines - n_sentences
+        logging.info(f"Wrote {n_sentences:,} sentences (removed {n_removed:,}) to '{pf_src}' and '{pf_tgt}.")
 
     def reader(self):
         for chunk_tuple in self.chunker.chunkify():
@@ -226,7 +246,7 @@ class Cleaner:
         valid_src = []
         valid_tgt = []
         for src_tuple, tgt_tuple in zip(src, tgt):
-            if src_tuple[2] / tgt_tuple[2] > self.max_ratio:
+            if len(src_tuple[1]) / len(tgt_tuple[1]) > self.max_ratio:
                 continue
             valid_src.append(src_tuple)
             valid_tgt.append(tgt_tuple)

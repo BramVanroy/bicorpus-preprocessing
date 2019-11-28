@@ -19,6 +19,11 @@ class Chunker:
         self.encoding = encoding
         self.pfin = Path(fin).resolve()
 
+        with self.pfin.open(encoding=encoding) as fhin:
+            for idx, _ in enumerate(fhin, 1):
+                pass
+
+            self.n_lines = idx
         logger.info(f"Chunking with a batch size of {batch_size:,} kilobytes.")
 
     def chunkify(self) -> Generator:
