@@ -16,6 +16,7 @@ class Cleaner:
     def __init__(self, chunker, *,
                  src_lang='en',
                  tgt_lang='nl',
+                 sep='\t',
                  tokenize=False,
                  dedupe=False,
                  src_model='en_core_web_sm',
@@ -23,8 +24,10 @@ class Cleaner:
                  n_workers=cpu_count()-1,
                  max_length=None,
                  min_length=None,
-                 max_ratio=None):
+                 max_ratio=None,
+                 keep_order=False):
         self.dedupe = dedupe
+        self.sep = sep
         self.src_lang = src_lang
         self.tgt_lang = tgt_lang
 
@@ -41,6 +44,8 @@ class Cleaner:
         self.max_length = max_length if max_length is not None else inf
         self.min_length = min_length if min_length is not None else 0
         self.max_ratio = max_ratio
+
+        self.keep_order = keep_order
 
         self.n_batches = 0
 
@@ -99,7 +104,7 @@ class Cleaner:
 
     def process_batch(self, chunk_start, chunk_size, ft_model, src_nlp=None, tgt_nlp=None, cb=None):
         batch = self.chunker.get_batch(chunk_start, chunk_size)
-        src, tgt = zip(*[map(str.strip, l.split('\t')) for l in batch])
+        src, tgt = zip(*[map(str.strip, l.split(self.sep, maxsplit=2)) for l in batch])
 
         src = self.lang_processor(src, self.src_lang, ft_model, src_nlp)
         tgt = self.lang_processor(tgt, self.tgt_lang, ft_model, tgt_nlp)
@@ -166,10 +171,12 @@ class Cleaner:
         n_sentences = 0
         prev_chunk_end = 0
         pbar = tqdm(total=self.n_batches, desc='Progress', unit='batch')
-        def _process(src, tgt, chnk_size):
+
+        def _process(src, tgt, chnk_size=None):
             nonlocal pbar, n_sentences, prev_chunk_end, src_tok_sents, tgt_tok_sents
 
-            prev_chunk_end += chnk_size
+            if chnk_size:
+                prev_chunk_end += chnk_size
 
             # Optionally filter duplicated sentences (tokenized)
             for src_tup, tgt_tup in zip(src, tgt):
@@ -190,32 +197,34 @@ class Cleaner:
                 break
             chunk_start, chunk_size, src_sentences, tgt_sentences = work
 
-            # process all examples in order
-            if prev_chunk_end == chunk_start:
-                _process(src_sentences, tgt_sentences, chunk_size)
+            if self.keep_order:
+                # process all examples in order
+                if prev_chunk_end == chunk_start:
+                    _process(src_sentences, tgt_sentences, chunk_size)
 
-                # check if existing data in the results follows
-                # the newly added data
-                if results:
-                    while True:
-                        nxt = results.pop(prev_chunk_end, None)
-                        if nxt:
-                            _process(nxt['src'], nxt['tgt'], nxt['chunk_size'])
-                        else:
-                            break
+                    # check if existing data in the results follows
+                    # the newly added data
+                    if results:
+                        while True:
+                            nxt = results.pop(prev_chunk_end, None)
+                            if nxt:
+                                _process(nxt['src'], nxt['tgt'], nxt['chunk_size'])
+                            else:
+                                break
+                else:
+                    results[chunk_start] = {
+                        'src': src_sentences,
+                        'tgt': tgt_sentences,
+                        'chunk_size': chunk_size
+                    }
             else:
-                results[chunk_start] = {
-                    'src': src_sentences,
-                    'tgt': tgt_sentences,
-                    'chunk_size': chunk_size
-                }
+                _process(src_sentences, tgt_sentences)
 
         pbar.close()
         return n_sentences
 
     def reader(self):
-        logging.info('Dividing the work...')
-        chunks = self.chunker.chunkify()
+        chunks = list(self.chunker.chunkify())
         self.result_queue.put(len(chunks))
 
         for chunk_tuple in chunks:
