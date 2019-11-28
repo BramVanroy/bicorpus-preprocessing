@@ -76,6 +76,8 @@ class Cleaner:
                      f" Removed {(total_init_sents-total_final_sents):,} out of {total_init_sents:,} sentences.")
 
     def worker(self):
+        # ft_model can't be pickled
+        # so init inside worker
         ft_model = fasttext.load_model('models/lid.176.bin')
 
         src_nlp = spacy.load(self.src_model, disable=['ner', 'textcat'])
@@ -167,8 +169,7 @@ class Cleaner:
                 if work == 'done':
                     break
                 chunk_start, chunk_size, src_sentences, tgt_sentences = work
-
-                if not prev_chunk_end or prev_chunk_end == chunk_start:
+                if prev_chunk_end == chunk_start:
                     n_batch += 1
                     logging.info(f"Processed batch {n_batch:,}...")
                     fh_src.write(src_sentences)
@@ -226,7 +227,6 @@ class Cleaner:
         valid_tgt = []
         for src_tuple, tgt_tuple in zip(src, tgt):
             if src_tuple[2] / tgt_tuple[2] > self.max_ratio:
-                logging.info(f"Invalid ratio for sentences: {src_tuple[0]} - {tgt_tuple[0]}")
                 continue
             valid_src.append(src_tuple)
             valid_tgt.append(tgt_tuple)
