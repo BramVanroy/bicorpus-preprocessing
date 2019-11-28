@@ -141,80 +141,72 @@ class Cleaner:
         return sentences
 
     def writer(self):
-        """ Results are not necessarily returned in order, so use prev_chunk_end
-            to ensure the correct output order.
-            TODO: this is messy. Rewrite. """
         pfin = self.chunker.pfin
         pf_src = pfin.with_suffix(f".{self.src_lang}")
         pf_tgt = pfin.with_suffix(f".{self.tgt_lang}")
 
-        n_sentences = 0
         with pf_src.open('w', encoding='utf-8') as fh_src, pf_tgt.open('w', encoding='utf-8') as fh_tgt:
-            src_tok_sents = set()
-            tgt_tok_sents = set()
-
-            results = {}
-            n_batch = 0
-            prev_chunk_end = 0
-
-            while True:
-                work = self.result_queue.get()
-                if work == 'done':
-                    break
-                chunk_start, chunk_size, src_sentences, tgt_sentences = work
-                if prev_chunk_end == chunk_start:
-                    n_batch += 1
-                    prev_chunk_end += chunk_size
-
-                    # Optionally filter duplicated sentences (tokenized)
-                    for src_tup, tgt_tup in zip(src_sentences, tgt_sentences):
-                        if not self.dedupe:
-                            fh_src.write(src_tup[0]+'\n')
-                            fh_tgt.write(tgt_tup[1]+'\n')
-                            n_sentences += 1
-                        elif src_tup[1] not in src_tok_sents and tgt_tup[1] not in tgt_tok_sents:
-                            fh_src.write(src_tup[0] + '\n')
-                            fh_tgt.write(tgt_tup[1] + '\n')
-                            src_tok_sents.add(src_tup[1])
-                            tgt_tok_sents.add(tgt_tup[1])
-                            n_sentences += 1
-
-                    logging.info(f"Processed batch {n_batch:,}...")
-
-                    # check if existing data in the results follows
-                    # the newly added data
-                    if results:
-                        while True:
-                            nxt = results.pop(prev_chunk_end, None)
-                            if nxt:
-                                n_batch += 1
-                                prev_chunk_end += nxt['chunk_size']
-
-                                # Optionally filter duplicated sentences (tokenized)
-                                for src_tup, tgt_tup in zip(nxt['src'], nxt['tgt']):
-                                    if not self.dedupe:
-                                        fh_src.write(src_tup[0] + '\n')
-                                        fh_tgt.write(tgt_tup[1] + '\n')
-                                        n_sentences += 1
-                                    elif src_tup[1] not in src_tok_sents and tgt_tup[1] not in tgt_tok_sents:
-                                        fh_src.write(src_tup[0] + '\n')
-                                        fh_tgt.write(tgt_tup[1] + '\n')
-                                        src_tok_sents.add(src_tup[1])
-                                        tgt_tok_sents.add(tgt_tup[1])
-                                        n_sentences += 1
-
-                                logging.info(f"Processed batch {n_batch:,}...")
-                            else:
-                                break
-                else:
-                    results[chunk_start] = {
-                        'src': src_sentences,
-                        'tgt': tgt_sentences,
-                        'chunk_size': chunk_size
-                    }
+            n_sentences = self._write(fh_src, fh_tgt)
 
         n_removed = self.chunker.n_lines - n_sentences
         logging.info(f"Wrote {n_sentences:,} sentences (removed {n_removed:,}) to '{pf_src}' and '{pf_tgt}.")
+
+    def _write(self, fh_src, fh_tgt):
+        """ Results are not necessarily returned in order, so use prev_chunk_end
+            to ensure the correct output order. """
+        src_tok_sents = set()
+        tgt_tok_sents = set()
+
+        n_batch = 0
+        n_sentences = 0
+        prev_chunk_end = 0
+
+        def _process(src, tgt, chnk_size):
+            nonlocal n_batch, n_sentences, prev_chunk_end, src_tok_sents, tgt_tok_sents
+
+            prev_chunk_end += chnk_size
+            n_batch += 1
+            # Optionally filter duplicated sentences (tokenized)
+            for src_tup, tgt_tup in zip(src, tgt):
+                if not self.dedupe or (src_tup[1] not in src_tok_sents and tgt_tup[1] not in tgt_tok_sents):
+                    fh_src.write(src_tup[0] + '\n')
+                    fh_tgt.write(tgt_tup[1] + '\n')
+                    n_sentences += 1
+
+                    if self.dedupe:
+                        src_tok_sents.add(src_tup[1])
+                        tgt_tok_sents.add(tgt_tup[1])
+
+            logging.info(f"Processed batch {n_batch:,}...")
+
+        results = {}
+        while True:
+            work = self.result_queue.get()
+            if work == 'done':
+                break
+            chunk_start, chunk_size, src_sentences, tgt_sentences = work
+
+            # process all examples in order
+            if prev_chunk_end == chunk_start:
+                _process(src_sentences, tgt_sentences, chunk_size)
+
+                # check if existing data in the results follows
+                # the newly added data
+                if results:
+                    while True:
+                        nxt = results.pop(prev_chunk_end, None)
+                        if nxt:
+                            _process(nxt['src'], nxt['tgt'], nxt['chunk_size'])
+                        else:
+                            break
+            else:
+                results[chunk_start] = {
+                    'src': src_sentences,
+                    'tgt': tgt_sentences,
+                    'chunk_size': chunk_size
+                }
+
+        return n_sentences
 
     def reader(self):
         for chunk_tuple in self.chunker.chunkify():
