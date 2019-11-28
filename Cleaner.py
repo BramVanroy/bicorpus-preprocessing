@@ -5,6 +5,7 @@ from multiprocessing import Manager, Process, Pool, cpu_count
 
 import fasttext
 import spacy
+from tqdm import tqdm
 
 logging.basicConfig(datefmt='%d-%b %H:%M:%S',
                     format='%(asctime)s - [%(levelname)s]: %(message)s',
@@ -41,6 +42,8 @@ class Cleaner:
         self.min_length = min_length if min_length is not None else 0
         self.max_ratio = max_ratio
 
+        self.n_batches = 0
+
     def parse(self):
         start_time = datetime.datetime.now()
 
@@ -51,6 +54,9 @@ class Cleaner:
             # The reader starts filling up the work_queue
             reader_proc = Process(target=self.reader)
             reader_proc.start()
+
+            # block until writer has returned n_batches
+            self.n_batches = self.result_queue.get()
 
             writer_proc = Process(target=self.writer)
             writer_proc.start()
@@ -157,15 +163,14 @@ class Cleaner:
         src_tok_sents = set()
         tgt_tok_sents = set()
 
-        n_batch = 0
         n_sentences = 0
         prev_chunk_end = 0
-
+        pbar = tqdm(total=self.n_batches, desc='Progress', unit='batch')
         def _process(src, tgt, chnk_size):
-            nonlocal n_batch, n_sentences, prev_chunk_end, src_tok_sents, tgt_tok_sents
+            nonlocal pbar, n_sentences, prev_chunk_end, src_tok_sents, tgt_tok_sents
 
             prev_chunk_end += chnk_size
-            n_batch += 1
+
             # Optionally filter duplicated sentences (tokenized)
             for src_tup, tgt_tup in zip(src, tgt):
                 if not self.dedupe or (src_tup[1] not in src_tok_sents and tgt_tup[1] not in tgt_tok_sents):
@@ -176,8 +181,7 @@ class Cleaner:
                     if self.dedupe:
                         src_tok_sents.add(src_tup[1])
                         tgt_tok_sents.add(tgt_tup[1])
-
-            logging.info(f"Processed batch {n_batch:,}...")
+            pbar.update(1)
 
         results = {}
         while True:
@@ -206,10 +210,15 @@ class Cleaner:
                     'chunk_size': chunk_size
                 }
 
+        pbar.close()
         return n_sentences
 
     def reader(self):
-        for chunk_tuple in self.chunker.chunkify():
+        logging.info('Dividing the work...')
+        chunks = self.chunker.chunkify()
+        self.result_queue.put(len(chunks))
+
+        for chunk_tuple in chunks:
             self.work_queue.put(chunk_tuple)
 
         for _ in range(self.n_workers):
