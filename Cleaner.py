@@ -121,9 +121,9 @@ class Cleaner:
         """ Check whether the ratio of number of tokens between source and target sentence does not
             exceed a given max value.
 
-        :param src: list of tuples containing a sentence, optionally tokenized sentence, boolean indicating
+        :param src: list of tuples containing a sentence, tokenized sentence, boolean indicating
                     whether or not this is a valid sentence.
-        :param tgt: list of tuples containing a sentence, optionally tokenized sentence, boolean indicating
+        :param tgt: list of tuples containing a sentence, tokenized sentence, boolean indicating
                     whether or not this is a valid sentence.
         :return: tuple of valid source and target sentences (each a list of tuples)
         """
@@ -161,7 +161,7 @@ class Cleaner:
                         batch: Iterable[str],
                         lang: str,
                         ft_model: fasttext.FastText._FastText,
-                        nlp: spacy.lang) -> List[Tuple[str, Optional[str], bool]]:
+                        nlp: spacy.lang) -> List[Tuple[str, str, bool]]:
         """ Does the main language checking. Firstly, tokenizes the input. Then it checks whether sentences
             are in the expected language, optionally with a minimal probability. Finally, also optionally,
             the minimal and maximal number of tokens are verified.
@@ -170,35 +170,33 @@ class Cleaner:
         :param lang: the abbreviation of the language to use (e.g. 'en')
         :param ft_model: the initialized fasttext model
         :param nlp: the inititialized spaCy model
-        :return: a list of tuples. Each tuple consists of the source sentence, optionally tokenized sentence,
+        :return: a list of tuples. Each tuple consists of the source sentence, tokenized sentence,
                  and a boolean indicating whether or not the sentence passed all conditions.
         """
-        sentences: List[Tuple[str, Optional[str], bool]] = []
+        sentences: List[Tuple[str, str, bool]] = []
         docs = nlp.pipe(batch)
         for doc in docs:
             for sent in doc.sents:
-                lang_label, prob = ft_model.predict(sent.text)
+                tokens = list(sent)
+                # only count tokens that consist of alphanum chars and not only digits
+                n_valid_tokens = len([t for t in tokens if t.text.isalnum() and not t.is_digit])
+                len_valid = self.min_length <= n_valid_tokens <= self.max_length
+                tokenized_sent = ' '.join([t.text for t in tokens])
 
                 lang_valid = True
-                # check if; if not: invalid
-                # 1. the predicted language is the one we expected
-                # 2. the probability is as high as we expected
-                if (lang_label[0].replace('__label__', '') != lang) \
-                        or (self.min_prob is not None and prob.item(0) < self.min_prob):
-                    lang_valid = False
+                if len_valid:
+                    # fasttext expects preprocessed text (it splits on spaces)
+                    # see https://github.com/facebookresearch/fastText/tree/master/python
+                    lang_label, prob = ft_model.predict(tokenized_sent)
 
-                len_valid = True
-                tokens = None
-                if lang_valid:
-                    tokens = list(sent)
-                    # only count tokens that consist of alphanum chars and not only digits
-                    n_valid_tokens = len([t for t in tokens if t.text.isalnum() and not t.is_digit])
-                    len_valid = self.min_length <= n_valid_tokens <= self.max_length
+                    # check if; if not: invalid
+                    # 1. the predicted language is the one we expected
+                    # 2. the probability is as high as we expected
+                    if (lang_label[0].replace('__label__', '') != lang) \
+                            or (self.min_prob is not None and prob.item(0) < self.min_prob):
+                        lang_valid = False
 
                 valid = len_valid and lang_valid
-                tokenized_sent = None
-                if valid:
-                    tokenized_sent = ' '.join([t.text for t in tokens])
 
                 sentences.append((sent.text, tokenized_sent, valid))
 
@@ -209,7 +207,7 @@ class Cleaner:
                        chunk_size: int,
                        ft_model: fasttext.FastText._FastText,
                        src_nlp: spacy.lang,
-                       tgt_nlp: spacy.lang) -> Tuple[List[Tuple[str, Optional[str]]], ...]:
+                       tgt_nlp: spacy.lang) -> Tuple[List[Tuple[str, str]], ...]:
         """ The overarching process to control the processing of a single batch. The batch still needs to
             be retrieved, given a chunk_start and chunk_size argument.
 
@@ -219,7 +217,7 @@ class Cleaner:
         :param src_nlp: the inititialized spaCy model for the source language
         :param tgt_nlp: the inititialized spaCy model for the source language
         :return: a tuple consisting of the source and target sentences. Each item is a list of
-                 tuples, consisting of the source sentence and optionally the tokenized sentence
+                 tuples, consisting of the source sentence and the tokenized sentence
         """
         batch = self.chunker.get_batch(chunk_start, chunk_size)
         src, tgt = zip(*[map(str.strip, l.split(self.sep, maxsplit=2)) for l in batch])
