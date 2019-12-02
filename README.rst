@@ -4,14 +4,14 @@ Bicorpus preprocessing
 This repository aims to preprocess a given parallel corpus in parallel so that it meets a specfic set of requirements.
 The tool is capable of **removing** sentences
 
-- that contain less than `n` and/or more than `m` tokens;
+- that contain less than :code:`n` and/or more than :code:`m` tokens;
 - where the ratio of number of tokens between source and target sentence is larger than expected;
 - that are duplicates of other sentences in a white-space agnostic manner. This means that even if one sentence contains
   the same tokens as another one but more white-space characters, they will still be seen as duplicates. The first
   encountered duplicate will be kept;
-- that are not written in an expected language (language detection happens through fasttext_ and/or are not given high
-  enough predicted probability. Fasttext predicts the language of given input text and assigns a probability value.
-  If the probability is not larger than or equal to a given value, a sentence can be discarded.
+- that are not written in an expected language (language detection happens through fasttext_ and/or are not
+  given high enough predicted probability. Fasttext predicts the language of given input text and assigns a probability
+  value. If the probability is not larger than or equal to a given value, a sentence can be discarded.
 
 In addition, the output can be tokenized when requested. Pre/postprocessing scripts are available to either construct
 a bicorpus from two separate parallel files, or to deconstruct a given bicorpus into separate files.
@@ -21,8 +21,8 @@ a bicorpus from two separate parallel files, or to deconstruct a given bicorpus 
 Installation
 ------------
 
-Simply clone this repo and do a `pipenv install`. The only dependencies are `spacy` for tokenisation and `fasttext` for
-language detection. Python 3.6 or higher is expected.
+Simply clone this repo and do a :code:`pipenv install`. The only dependencies are :code:`spacy` for tokenisation and
+:code:`fasttext` for language detection. Python 3.6 or higher is expected.
 
 .. code-block:: bash
 
@@ -33,7 +33,7 @@ language detection. Python 3.6 or higher is expected.
 Usage
 -----
 
-Do not forget to activate your virtual environment before usage, or use `pipenv run` instead.
+Do not forget to activate your virtual environment before usage, or use :code:`pipenv run` instead.
 
 .. code-block:: bash
 
@@ -42,7 +42,7 @@ Do not forget to activate your virtual environment before usage, or use `pipenv 
     # OR
     pipenv run python main.py my_bicorpus.txt --src_lang en --tgt_lang nl
 
-Available arguments (as per `main.py -h`):
+Available arguments (as per :code:`main.py -h`):
 
 .. code-block:: bash
 
@@ -101,5 +101,5 @@ Available arguments (as per `main.py -h`):
                             added on top of this number). Default depends on your
                             hardware (default: total_n_cpus-1)
 
-The preprocessing script is called `bicorpus.py`. Its main arguments are `construct` and `deconstruct`. If you need
-help using the script, just call `bicorpus.py construct -h` or equivalent.
+The preprocessing script is called :code:`bicorpus.py`. Its main arguments are :code:`construct` and
+:code:`deconstruct`. If you need help using the script, just call :code:`bicorpus.py construct -h` or equivalent.
