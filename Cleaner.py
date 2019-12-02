@@ -5,11 +5,15 @@ from multiprocessing import Manager, Process, Pool, cpu_count
 
 import fasttext
 import spacy
+
 from tqdm import tqdm
 
 logging.basicConfig(datefmt='%d-%b %H:%M:%S',
                     format='%(asctime)s - [%(levelname)s]: %(message)s',
                     level=logging.INFO)
+
+using_gpu = spacy.prefer_gpu()
+logging.info(f"Using spaCy GPU? {using_gpu}")
 
 
 class Cleaner:
