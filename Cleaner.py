@@ -143,10 +143,8 @@ class Cleaner:
         # ft_model can't be pickled
         # so init inside worker
         ft_model = fasttext.load_model('models/lid.176.bin')
-        src_nlp = spacy.load(self.src_model, disable=['ner', 'textcat'])
-        src_nlp.add_pipe(self._prevent_sbd, name='prevent-sbd', before='parser')
-        tgt_nlp = spacy.load(self.tgt_model, disable=['ner', 'textcat'])
-        tgt_nlp.add_pipe(self._prevent_sbd, name='prevent-sbd', before='parser')
+        src_nlp = spacy.load(self.src_model, disable=['parser', 'tagger', 'ner', 'textcat'])
+        tgt_nlp = spacy.load(self.tgt_model, disable=['parser', 'tagger', 'ner', 'textcat'])
         while True:
             # Get work from the working queue
             work = self.work_queue.get()
@@ -173,32 +171,31 @@ class Cleaner:
         :return: a list of tuples. Each tuple consists of the source sentence, tokenized sentence,
                  and a boolean indicating whether or not the sentence passed all conditions.
         """
-        sentences: List[Tuple[str, str, bool]] = []
+        sentences = []
         docs = nlp.pipe(batch)
         for doc in docs:
-            for sent in doc.sents:
-                tokens = list(sent)
-                # only count tokens that consist of alphanum chars and not only digits
-                n_valid_tokens = len([t for t in tokens if t.text.isalnum() and not t.is_digit])
-                len_valid = self.min_length <= n_valid_tokens <= self.max_length
-                tokenized_sent = ' '.join([t.text for t in tokens])
+            tokens = list(doc)
+            # only count tokens that consist of alphanum chars and not only digits
+            n_valid_tokens = len([t for t in tokens if t.text.isalnum() and not t.text.isdigit])
+            len_valid = self.min_length <= n_valid_tokens <= self.max_length
+            tokenized_sent = ' '.join([t.text for t in tokens])
 
-                lang_valid = True
-                if len_valid:
-                    # fasttext expects preprocessed text (it splits on spaces)
-                    # see https://github.com/facebookresearch/fastText/tree/master/python
-                    lang_label, prob = ft_model.predict(tokenized_sent)
+            lang_valid = True
+            if len_valid:
+                # fasttext expects preprocessed text (it splits on spaces)
+                # see https://github.com/facebookresearch/fastText/tree/master/python
+                lang_label, prob = ft_model.predict(tokenized_sent)
 
-                    # check if; if not: invalid
-                    # 1. the predicted language is the one we expected
-                    # 2. the probability is as high as we expected
-                    if (lang_label[0].replace('__label__', '') != lang) \
-                            or (self.min_prob is not None and prob.item(0) < self.min_prob):
-                        lang_valid = False
+                # check if; if not: invalid
+                # 1. the predicted language is the one we expected
+                # 2. the probability is as high as we expected
+                if (lang_label[0].replace('__label__', '') != lang) \
+                        or (self.min_prob is not None and prob.item(0) < self.min_prob):
+                    lang_valid = False
 
-                valid = len_valid and lang_valid
+            valid = len_valid and lang_valid
 
-                sentences.append((sent.text, tokenized_sent, valid))
+            sentences.append((doc.text, tokenized_sent, valid))
 
         return sentences
 
@@ -258,18 +255,6 @@ class Cleaner:
                 except IndexError:
                     raise IndexError(f"Could not remove index {i} in list {l}")
         return src, tgt
-
-    @staticmethod
-    def _prevent_sbd(doc: spacy.tokens.doc.Doc):
-        """ Disables sentence segmentation in spaCy.
-
-        :param doc:the input Doc object
-        :return: the adapted doc object, ensuring that the tokens are all set to is_sent_start=False
-        """
-
-        for token in doc:
-            token.is_sent_start = False
-        return doc
 
     # READER/WRITER METHODS
     def reader(self):
