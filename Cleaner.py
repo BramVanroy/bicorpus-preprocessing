@@ -25,6 +25,7 @@ class Cleaner:
                  max_length=None,
                  min_length=None,
                  max_ratio=None,
+                 min_prob=None,
                  keep_order=False):
         self.dedupe = dedupe
         self.sep = sep
@@ -44,6 +45,8 @@ class Cleaner:
         self.max_length = max_length if max_length is not None else inf
         self.min_length = min_length if min_length is not None else 0
         self.max_ratio = max_ratio
+
+        self.min_prob = min_prob
 
         self.keep_order = keep_order
 
@@ -132,29 +135,37 @@ class Cleaner:
         docs = nlp.pipe(batch)
         for doc in docs:
             for sent in doc.sents:
-                tokens = list(sent)
-                # only count tokens that consist of alphanum chars and not only digits
-                n_valid_tokens = len([t for t in tokens if t.text.isalnum() and not t.is_digit])
-                len_valid = self.min_length <= n_valid_tokens <= self.max_length
+                lang_label, prob = ft_model.predict(sent.text)
 
-                lang_label, _ = ft_model.predict(sent.text)
-                lang_valid = lang_label[0].replace('__label__', '') == lang
+                lang_valid = True
+                # check if; if not: invalid
+                # 1. the predicted language is the one we expected
+                # 2. the probability is as high as we expected
+                if (lang_label[0].replace('__label__', '') != lang)\
+                        or (self.min_prob is not None and prob.item(0) < self.min_prob):
+                    lang_valid = False
 
-                tokenized_sent = ' '.join([t.text for t in tokens])
+                len_valid = True
+                if lang_valid:
+                    tokens = list(sent)
+                    # only count tokens that consist of alphanum chars and not only digits
+                    n_valid_tokens = len([t for t in tokens if t.text.isalnum() and not t.is_digit])
+                    len_valid = self.min_length <= n_valid_tokens <= self.max_length
 
-                if self.tokenize:
-                    sent = tokenized_sent
-                else:
-                    sent = sent.text
+                valid = len_valid and lang_valid
+                tokenized_sent = None
+                if valid:
+                    tokenized_sent = ' '.join([t.text for t in tokens])
 
-                sentences.append((sent, tokenized_sent, len_valid and lang_valid))
+                sentences.append((sent.text, tokenized_sent, valid))
 
         return sentences
 
     def writer(self):
         pfin = self.chunker.pfin
-        pf_src = pfin.with_suffix(f".{self.src_lang}")
-        pf_tgt = pfin.with_suffix(f".{self.tgt_lang}")
+        tok_suff = '.tok' if self.tokenize else ''
+        pf_src = pfin.with_suffix(f"{tok_suff}.{self.src_lang}")
+        pf_tgt = pfin.with_suffix(f"{tok_suff}.{self.tgt_lang}")
 
         with pf_src.open('w', encoding='utf-8') as fh_src, pf_tgt.open('w', encoding='utf-8') as fh_tgt:
             n_sentences = self._write(fh_src, fh_tgt)
@@ -163,8 +174,6 @@ class Cleaner:
         logging.info(f"Wrote {n_sentences:,} sentences (removed {n_removed:,}) to '{pf_src}' and '{pf_tgt}.")
 
     def _write(self, fh_src, fh_tgt):
-        """ Results are not necessarily returned in order, so use prev_chunk_end
-            to ensure the correct output order. """
         src_tok_sents = set()
         tgt_tok_sents = set()
 
@@ -181,8 +190,10 @@ class Cleaner:
             # Optionally filter duplicated sentences (tokenized)
             for src_tup, tgt_tup in zip(src, tgt):
                 if not self.dedupe or (src_tup[1] not in src_tok_sents and tgt_tup[1] not in tgt_tok_sents):
-                    fh_src.write(src_tup[0] + '\n')
-                    fh_tgt.write(tgt_tup[1] + '\n')
+                    src_sent = src_tup[1] if self.tokenize else src_tup[0]
+                    tgt_sent = tgt_tup[1] if self.tokenize else tgt_tup[0]
+                    fh_src.write(f"{src_sent}\n")
+                    fh_tgt.write(f"{tgt_sent}\n")
                     n_sentences += 1
 
                     if self.dedupe:

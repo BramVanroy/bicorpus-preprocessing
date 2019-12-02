@@ -37,6 +37,10 @@ if __name__ == '__main__':
     cparser.add_argument('--max_ratio',
                          help='Maximal ratio of numbers of tokens in source and target sentence',
                          type=int)
+    cparser.add_argument('--min_prob',
+                         help="The minimal certainty (or probability) for language detection. If fasttext is less"
+                              " than 'min_prob' certain about the predicted language, the sentence will be discarded.",
+                         type=float)
     cparser.add_argument('-n', '--n_workers',
                          help='Total number of workers (reader and writer processes added on top of this number).'
                               ' Default depends on your hardware',
