@@ -1,7 +1,17 @@
 from pathlib import Path
+from typing import Tuple, Union
 
 
-def construct(fsrc, ftgt, *, sep='\t', encoding='utf-8', **kwargs):
+def construct(fsrc: str, ftgt: str, *, sep: str = '\t', encoding: str = 'utf-8', **kwargs) -> Path:
+    """ Construct a bilingual corpus by merging two text files into one by a given separator.
+
+    :param fsrc: path to the source file
+    :param ftgt: path to the target file
+    :param sep: separator to use to glue source and target lines together
+    :param encoding: encoding of fsrc and ftgt as well as the encoding for the target file
+    :param kwargs: [unused]
+    :return: output Path-object
+    """
     pfsrc = Path(fsrc)
     pftgt = Path(ftgt)
     src_ext = pfsrc.suffix
@@ -18,8 +28,26 @@ def construct(fsrc, ftgt, *, sep='\t', encoding='utf-8', **kwargs):
 
     print(f"Files processed as '{pfout}'")
 
+    return pfout
 
-def deconstruct(fin, *, src_ext, tgt_ext, sep='\t', encoding='utf-8', **kwargs):
+
+def deconstruct(fin: str,
+                *,
+                src_ext: str,
+                tgt_ext: str,
+                sep: str = '\t',
+                encoding: str = 'utf-8',
+                **kwargs) -> Tuple[Union[str, bytes, Path]]:
+    """ Deconstruct a bilingual corpus file by splitting sentences into a source and target file.
+
+    :param fin: path to input file
+    :param src_ext: extension to use for the source file
+    :param tgt_ext: extension to use for the target file
+    :param sep: separator to split the input sentences on
+    :param encoding: encoding of the input file as well as the encoding for the output files
+    :param kwargs: [unused]
+    :return: Tuple containing Path of created source and target files
+    """
     pfin = Path(fin)
     pfsrc = pfin.with_suffix(f".{src_ext}")
     pftgt = pfin.with_suffix(f".{tgt_ext}")
@@ -33,7 +61,9 @@ def deconstruct(fin, *, src_ext, tgt_ext, sep='\t', encoding='utf-8', **kwargs):
             fhsrc.write(f"{src}\n")
             fhtgt.write(f"{tgt}\n")
 
-    print(f"File processed as '{pfsrc}' and '{pftgt}")
+    print(f"File processed as '{pfsrc}' and '{pftgt}'")
+
+    return pfsrc, pftgt
 
 
 if __name__ == '__main__':
@@ -53,8 +83,8 @@ if __name__ == '__main__':
     deconstruct_parser = subparsers.add_parser('deconstruct')
     deconstruct_parser.set_defaults(func=deconstruct)
     deconstruct_parser.add_argument('fin', help='Input file')
-    deconstruct_parser.add_argument('src_ext', help='Extension for the source file')
-    deconstruct_parser.add_argument('tgt_ext', help='Extension for the target file')
+    deconstruct_parser.add_argument('--src_ext', required=True, help='Extension for the source file')
+    deconstruct_parser.add_argument('--tgt_ext', required=True, help='Extension for the target file')
 
     cargs = cparser.parse_args()
     cargs.func(**vars(cargs))

@@ -1,12 +1,14 @@
 import datetime
 import logging
 from math import inf
-from multiprocessing import Manager, Process, Pool, cpu_count
+from multiprocessing import cpu_count, Manager, Pool, Process
+from typing import Iterable, List, Optional, TextIO, Tuple
 
 import fasttext
 import spacy
-
 from tqdm import tqdm
+
+from Chunker import Chunker
 
 logging.basicConfig(datefmt='%d-%b %H:%M:%S',
                     format='%(asctime)s - [%(levelname)s]: %(message)s',
@@ -14,46 +16,73 @@ logging.basicConfig(datefmt='%d-%b %H:%M:%S',
 
 
 class Cleaner:
-    def __init__(self, chunker, *,
-                 src_lang='en',
-                 tgt_lang='nl',
-                 sep='\t',
-                 tokenize=False,
-                 dedupe=False,
-                 src_model='en_core_web_sm',
-                 tgt_model='nl_core_news_sm',
-                 n_workers=cpu_count()-1,
-                 max_length=None,
-                 min_length=None,
-                 max_ratio=None,
-                 min_prob=None,
-                 keep_order=False):
-        self.dedupe = dedupe
-        self.sep = sep
-        self.src_lang = src_lang
-        self.tgt_lang = tgt_lang
+    """ Creates a cleaner object which has parse() as its main entrypoint. It can clean a bicorpus by
+        performing operations such as deduplicating (by tokenized sentences), restrict the length of
+        sentences, only keeping text where a language predictor (fasttext) is certain of the language.
+        The system can optionally also tokenize the output files.
 
-        self.tokenize = tokenize
-        self.src_model = src_model
-        self.tgt_model = tgt_model
+        If required, output files can be merged together with the utility script in bicorpus.py.
 
-        self.work_queue = None
-        self.result_queue = None
-
-        self.n_workers = n_workers
+    :param chunker: a chunker instance that chunks the input file for high-performance parallel processing
+    :param dedupe: whether to deduplicate the text. Deduplicating is done based on tokenized sentences rather
+                   than actual sentences to avoid seemingly non-duplicates to exist.
+    :param keep_order: whether to maintain the order of the input file. Might be slower and consume more memory.
+    :param max_length: an optional max length. Sentences that are longer will not be included.
+    :param max_ratio: an optional max ratio between the source and target sentence. Lines for which the ratio
+                      is larger will not be included.
+    :param min_length: an optional min length. Sentences that are shorter will not be included.
+    :param min_prob: an optional minimal probability. If the detector (fasttext) shows a lower probability,
+                     the sentence will not be included. If left empty, the only condition is that the highest
+                     predicted language is the same as the requested language.
+    :param n_workers: how many workers to use for parallel processing.
+    :param sep: separator to separate the input lines on, resulting in the source and target text.
+    :param src_lang: abbreviation of the source language (e.g. 'en')
+    :param src_model: spaCy model to use (e.g. 'en_core_web_sm')
+    :param tgt_model: abbreviation of the target language (e.g. 'nl')
+    :param tgt_lang: spaCy model to use (e.g. 'nl_core_news_sm')
+    :param tokenize: whether to save the output as tokenized sentences.
+    """
+    def __init__(self,
+                 chunker: Chunker,
+                 *,
+                 dedupe: bool = False,
+                 keep_order: bool = False,
+                 max_length: Optional[int] = None,
+                 max_ratio: Optional[int] = None,
+                 min_length: Optional[int] = None,
+                 min_prob: Optional[int] = None,
+                 n_workers: int = cpu_count() - 1,
+                 sep: str = '\t',
+                 src_lang: str = 'en',
+                 src_model: str = 'en_core_web_sm',
+                 tgt_model: str = 'nl_core_news_sm',
+                 tgt_lang: str = 'nl',
+                 tokenize: bool = False):
         self.chunker = chunker
 
-        self.max_length = max_length if max_length is not None else inf
-        self.min_length = min_length if min_length is not None else 0
-        self.max_ratio = max_ratio
-
-        self.min_prob = min_prob
-
+        self.dedupe = dedupe
         self.keep_order = keep_order
+        self.max_length = max_length if max_length is not None else inf
+        self.max_ratio = max_ratio
+        self.min_length = min_length if min_length is not None else 0
+        self.min_prob = min_prob
+        self.n_workers = n_workers
+        self.sep = sep
+        self.src_lang = src_lang
+        self.src_model = src_model
+        self.tgt_lang = tgt_lang
+        self.tgt_model = tgt_model
+        self.tokenize = tokenize
 
-        self.n_batches = 0
+        self.result_queue = None
+        self.work_queue = None
+
+        self.n_batches: int = 0
 
     def parse(self):
+        """ Parses the input file that is chunked by the chunker in parallel.
+            Writes only the sentences for which all conditions hold true, optionally tokenized.
+        """
         start_time = datetime.datetime.now()
 
         with Manager() as manager:
@@ -71,7 +100,7 @@ class Cleaner:
             writer_proc.start()
 
             with Pool(processes=self.n_workers) as pool:
-                jobs = [pool.apply_async(self.worker) for _ in range(self.n_workers)]
+                jobs = [pool.apply_async(self._init_worker) for _ in range(self.n_workers)]
 
                 for job in jobs:
                     _ = job.get()
@@ -86,16 +115,38 @@ class Cleaner:
 
         logging.info(f"Finished process in {datetime.datetime.now() - start_time}.")
 
-    def worker(self):
+    def _check_ratio(self,
+                     src: List[Tuple],
+                     tgt: List[Tuple]) -> Tuple[List[Tuple], List[Tuple]]:
+        """ Check whether the ratio of number of tokens between source and target sentence does not
+            exceed a given max value.
+
+        :param src: list of tuples containing a sentence, optionally tokenized sentence, boolean indicating
+                    whether or not this is a valid sentence.
+        :param tgt: list of tuples containing a sentence, optionally tokenized sentence, boolean indicating
+                    whether or not this is a valid sentence.
+        :return: tuple of valid source and target sentences (each a list of tuples)
+        """
+        valid_src = []
+        valid_tgt = []
+        for src_tuple, tgt_tuple in zip(src, tgt):
+            if len(src_tuple[1]) / len(tgt_tuple[1]) > self.max_ratio:
+                continue
+            valid_src.append(src_tuple)
+            valid_tgt.append(tgt_tuple)
+
+        return valid_src, valid_tgt
+
+    def _init_worker(self):
+        """ Initializes a worker. Each worker reads from the queue, processes
+            a batch, and puts the output in another queue. """
         # ft_model can't be pickled
         # so init inside worker
         ft_model = fasttext.load_model('models/lid.176.bin')
-
         src_nlp = spacy.load(self.src_model, disable=['ner', 'textcat'])
         src_nlp.add_pipe(self._prevent_sbd, name='prevent-sbd', before='parser')
         tgt_nlp = spacy.load(self.tgt_model, disable=['ner', 'textcat'])
         tgt_nlp.add_pipe(self._prevent_sbd, name='prevent-sbd', before='parser')
-
         while True:
             # Get work from the working queue
             work = self.work_queue.get()
@@ -103,36 +154,26 @@ class Cleaner:
                 break
 
             chunk_start, chunk_size = work
-            src_sentences, tgt_sentences = self.process_batch(chunk_start, chunk_size, ft_model, src_nlp, tgt_nlp)
+            src_sentences, tgt_sentences = self._process_batch(chunk_start, chunk_size, ft_model, src_nlp, tgt_nlp)
             self.result_queue.put((chunk_start, chunk_size, src_sentences, tgt_sentences))
 
-    def process_batch(self, chunk_start, chunk_size, ft_model, src_nlp=None, tgt_nlp=None, cb=None):
-        batch = self.chunker.get_batch(chunk_start, chunk_size)
-        src, tgt = zip(*[map(str.strip, l.split(self.sep, maxsplit=2)) for l in batch])
+    def _lang_processor(self,
+                        batch: Iterable[str],
+                        lang: str,
+                        ft_model: fasttext.FastText._FastText,
+                        nlp: spacy.lang) -> List[Tuple[str, Optional[str], bool]]:
+        """ Does the main language checking. Firstly, tokenizes the input. Then it checks whether sentences
+            are in the expected language, optionally with a minimal probability. Finally, also optionally,
+            the minimal and maximal number of tokens are verified.
 
-        src = self.lang_processor(src, self.src_lang, ft_model, src_nlp)
-        tgt = self.lang_processor(tgt, self.tgt_lang, ft_model, tgt_nlp)
-
-        invalid_idxs = {idx for idx, tupl in enumerate(src) if not tupl[2]}
-        invalid_idxs.update({idx for idx, tupl in enumerate(tgt) if not tupl[2]})
-
-        if invalid_idxs:
-            src, tgt = self._delete_idxs(src, tgt, idxs=invalid_idxs)
-
-        if self.max_ratio:
-            src, tgt = self.check_ratio(src, tgt)
-
-        # remove the 'invalid' bool: now list of tuples: (sent, tok_sent)
-        src = [(s[0], s[1]) for s in src]
-        tgt = [(s[0], s[1]) for s in tgt]
-
-        if cb:
-            src, tgt = cb(src, tgt)
-
-        return src, tgt
-
-    def lang_processor(self, batch, lang, ft_model, nlp=None):
-        sentences = []
+        :param batch: batch of sentences to process (a list of strings)
+        :param lang: the abbreviation of the language to use (e.g. 'en')
+        :param ft_model: the initialized fasttext model
+        :param nlp: the inititialized spaCy model
+        :return: a list of tuples. Each tuple consists of the source sentence, optionally tokenized sentence,
+                 and a boolean indicating whether or not the sentence passed all conditions.
+        """
+        sentences: List[Tuple[str, Optional[str], bool]] = []
         docs = nlp.pipe(batch)
         for doc in docs:
             for sent in doc.sents:
@@ -142,11 +183,12 @@ class Cleaner:
                 # check if; if not: invalid
                 # 1. the predicted language is the one we expected
                 # 2. the probability is as high as we expected
-                if (lang_label[0].replace('__label__', '') != lang)\
+                if (lang_label[0].replace('__label__', '') != lang) \
                         or (self.min_prob is not None and prob.item(0) < self.min_prob):
                     lang_valid = False
 
                 len_valid = True
+                tokens = None
                 if lang_valid:
                     tokens = list(sent)
                     # only count tokens that consist of alphanum chars and not only digits
@@ -162,7 +204,95 @@ class Cleaner:
 
         return sentences
 
+    def _process_batch(self,
+                       chunk_start: int,
+                       chunk_size: int,
+                       ft_model: fasttext.FastText._FastText,
+                       src_nlp: spacy.lang,
+                       tgt_nlp: spacy.lang) -> Tuple[List[Tuple[str, Optional[str]]], ...]:
+        """ The overarching process to control the processing of a single batch. The batch still needs to
+            be retrieved, given a chunk_start and chunk_size argument.
+
+        :param chunk_start: start byte for this batch
+        :param chunk_size: size (in bytes) of this batch
+        :param ft_model: the initialized fasttext model
+        :param src_nlp: the inititialized spaCy model for the source language
+        :param tgt_nlp: the inititialized spaCy model for the source language
+        :return: a tuple consisting of the source and target sentences. Each item is a list of
+                 tuples, consisting of the source sentence and optionally the tokenized sentence
+        """
+        batch = self.chunker.get_batch(chunk_start, chunk_size)
+        src, tgt = zip(*[map(str.strip, l.split(self.sep, maxsplit=2)) for l in batch])
+
+        src = self._lang_processor(src, self.src_lang, ft_model, src_nlp)
+        tgt = self._lang_processor(tgt, self.tgt_lang, ft_model, tgt_nlp)
+
+        invalid_idxs = {idx for idx, tupl in enumerate(src) if not tupl[2]}
+        invalid_idxs.update({idx for idx, tupl in enumerate(tgt) if not tupl[2]})
+
+        if invalid_idxs:
+            src, tgt = self._delete_idxs(src, tgt, idxs=invalid_idxs)
+
+        if self.max_ratio:
+            src, tgt = self._check_ratio(src, tgt)
+
+        # remove the 'invalid' bool: now list of tuples: (sent, tok_sent)
+        src = [(s[0], s[1]) for s in src]
+        tgt = [(s[0], s[1]) for s in tgt]
+
+        return src, tgt
+
+    @staticmethod
+    def _delete_idxs(src: List[Tuple],
+                     tgt: List[Tuple],
+                     idxs: Iterable[int]) -> Tuple[List[Tuple], List[Tuple]]:
+        """ Deletes indices from two given lists (src and tgt)
+
+        :param src: the list containing source elements
+        :param tgt: the list containing target elements
+        :param idxs: the indices to remove
+        :return: a tuple consisting of the src and tgt lists with the given idxs removed
+        """
+        for i in sorted(idxs, reverse=True):
+            for l in (src, tgt):
+                try:
+                    del l[i]
+                except IndexError:
+                    raise IndexError(f"Could not remove index {i} in list {l}")
+        return src, tgt
+
+    @staticmethod
+    def _prevent_sbd(doc: spacy.tokens.doc.Doc):
+        """ Disables sentence segmentation in spaCy.
+
+        :param doc:the input Doc object
+        :return: the adapted doc object, ensuring that the tokens are all set to is_sent_start=False
+        """
+
+        for token in doc:
+            token.is_sent_start = False
+        return doc
+
+    # READER/WRITER METHODS
+    def reader(self):
+        """ A reader function, ideally connected to a separate process. Reads all chunks
+            from the chunker. Puts data in the work_queue. First the number of batches
+            (processed in main process), then all batches, one-by-one.
+        """
+        # first get the number of chunks (batches)
+        # this is used in tqdm to keep track of processed batches
+        chunks = list(self.chunker.chunkify())
+        self.result_queue.put(len(chunks))
+
+        for chunk_tuple in chunks:
+            self.work_queue.put(chunk_tuple)
+
+        for _ in range(self.n_workers):
+            self.work_queue.put('done')
+
     def writer(self):
+        """ A writer function, ideally connected to a separate process. Opens file
+            streams and delegates all the actual writing to _write. """
         pfin = self.chunker.pfin
         tok_suff = '.tok' if self.tokenize else ''
         pf_src = pfin.with_suffix(f"{tok_suff}.{self.src_lang}")
@@ -174,7 +304,12 @@ class Cleaner:
         n_removed = self.chunker.n_lines - n_sentences
         logging.info(f"Wrote {n_sentences:,} sentences (removed {n_removed:,}) to '{pf_src}' and '{pf_tgt}.")
 
-    def _write(self, fh_src, fh_tgt):
+    def _write(self, fh_src: TextIO, fh_tgt: TextIO):
+        """ Reads chunks from the result_queue, and write them to the given file objects.
+
+        :param fh_src: Open file handle for the source file.
+        :param fh_tgt: Open file handle for the traget file.
+        """
         src_tok_sents = set()
         tgt_tok_sents = set()
 
@@ -182,7 +317,7 @@ class Cleaner:
         prev_chunk_end = 0
         pbar = tqdm(total=self.n_batches, desc='Progress', unit='batch')
 
-        def _process(src, tgt, chnk_size=None):
+        def _process(src: Tuple[str, str], tgt: Tuple[str, str], chnk_size: Optional[int] = None):
             nonlocal pbar, n_sentences, prev_chunk_end, src_tok_sents, tgt_tok_sents
 
             if chnk_size:
@@ -234,43 +369,3 @@ class Cleaner:
 
         pbar.close()
         return n_sentences
-
-    def reader(self):
-        chunks = list(self.chunker.chunkify())
-        self.result_queue.put(len(chunks))
-
-        for chunk_tuple in chunks:
-            self.work_queue.put(chunk_tuple)
-
-        for _ in range(self.n_workers):
-            self.work_queue.put('done')
-
-    @staticmethod
-    def _delete_idxs(*lists, idxs):
-        for i in sorted(idxs, reverse=True):
-            for l in lists:
-                try:
-                    del l[i]
-                except IndexError:
-                    raise IndexError(f"index {i} in list {l}")
-        return lists
-
-    @staticmethod
-    def _prevent_sbd(doc):
-        # If you already have one sentence per line in your file
-        # you may wish to disable sentence segmentation with this function,
-        # which is added to the nlp pipe in the constructor
-        for token in doc:
-            token.is_sent_start = False
-        return doc
-
-    def check_ratio(self, src, tgt):
-        valid_src = []
-        valid_tgt = []
-        for src_tuple, tgt_tuple in zip(src, tgt):
-            if len(src_tuple[1]) / len(tgt_tuple[1]) > self.max_ratio:
-                continue
-            valid_src.append(src_tuple)
-            valid_tgt.append(tgt_tuple)
-
-        return valid_src, valid_tgt

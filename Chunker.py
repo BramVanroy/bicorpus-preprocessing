@@ -2,7 +2,7 @@ import logging
 from os import stat
 from pathlib import Path
 
-from typing import Generator, Union
+from typing import Generator, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
@@ -10,7 +10,8 @@ logger = logging.getLogger(__name__)
 class Chunker:
     """ Chunker that can chunk a file into byte ranges which can then be retrieved as a list of encoded lines. """
     def __init__(self, fin: Union[str, bytes, Path], batch_size: int = 1000, encoding: str = 'utf-8'):
-        """
+        """ Initialize a chunker.
+
         :param fin: filename to chunk
         :param batch_size: approximate size of each chunk (in kilobytes)
         :param encoding: encoding of the input file. Will be used when retrieving the encoded batch of lines
@@ -26,7 +27,7 @@ class Chunker:
             self.n_lines = idx
         logger.info(f"Chunking with a batch size of {batch_size:,} kilobytes.")
 
-    def chunkify(self) -> Generator:
+    def chunkify(self) -> Generator[Tuple[int, int], None, None]:
         """ Chunks a file into sequential byte ranges of approximately the same size as defined in the constructor.
         The size of each chunk is not exactly the same because if a chunk ends on an incomplete line, the remainder
         of the line will also be read and included in the chunk.
@@ -49,7 +50,7 @@ class Chunker:
                     yield prev_pos, pos - prev_pos
                     prev_pos = pos
 
-    def get_batch(self, chunk_start: int, chunk_size: int) -> Generator:
+    def get_batch(self, chunk_start: int, chunk_size: int) -> Generator[str, None, None]:
         """ Retrieves a chunk, given a starting byte and chunk size, as a batch of encoded lines through a generator.
 
         :param chunk_start: the starting byte position of the requested chunk
