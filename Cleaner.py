@@ -26,6 +26,8 @@ class Cleaner:
     :param chunker: a chunker instance that chunks the input file for high-performance parallel processing
     :param dedupe: whether to deduplicate the text. Deduplicating is done based on tokenized sentences rather
                    than actual sentences to avoid seemingly non-duplicates to exist.
+    :param do_lower_case: whether to write the output in lower case. This implies if deduplication is enabled,
+                          it happens on the lower cased text.
     :param keep_order: whether to maintain the order of the input file. Might be slower and consume more memory.
     :param max_length: an optional max length. Sentences that are longer will not be included.
     :param max_ratio: an optional max ratio between the source and target sentence. Lines for which the ratio

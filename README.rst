@@ -9,12 +9,12 @@ The tool is capable of **removing** sentences
 - that are duplicates of other sentences in a white-space agnostic manner. This means that even if one sentence contains
   the same tokens as another one but more white-space characters, they will still be seen as duplicates. The first
   encountered duplicate will be kept;
-- that are not written in an expected language (language detection happens through fasttext_ and/or are not
+- that are not written in an expected language (language detection happens through fasttext_) and, optionally, are not
   given high enough predicted probability. Fasttext predicts the language of given input text and assigns a probability
   value. If the probability is not larger than or equal to a given value, a sentence can be discarded.
 
-In addition, the output can be tokenized when requested. Pre/postprocessing scripts are available to either construct
-a bicorpus from two separate parallel files, or to deconstruct a given bicorpus into separate files.
+In addition, the output can be tokenized and lowercased when requested. Pre/postprocessing scripts are available to
+either construct a bicorpus from two separate parallel files, or to deconstruct a given bicorpus into separate files.
 
 .. _fasttext: https://github.com/facebookresearch/fastText/tree/master/python
 
@@ -29,6 +29,12 @@ Simply clone this repo and do a :code:`pipenv install`. The only dependencies ar
     git clone https://github.com/BramVanroy/bicorpus-preprocessing.git
     cd bicorpus-preprocessing
     pipenv install
+
+Don't forget to install the relevant spaCy language models, e.g.
+
+.. code-block:: bash
+
+    pipenv run python -m spacy download en
 
 Usage
 -----
@@ -48,7 +54,7 @@ Available arguments (as per :code:`main.py -h`):
 
     usage: main.py [-h] [-s SRC_LANG] [--src_model SRC_MODEL] [-t TGT_LANG]
                    [--tgt_model TGT_MODEL] [--sep SEP] [-b BATCH_SIZE]
-                   [--tokenize] [--dedupe] [--keep_order]
+                   [--tokenize] [--dedupe] [--do_lower_case] [--keep_order]
                    [--max_length MAX_LENGTH] [--min_length MIN_LENGTH]
                    [--max_ratio MAX_RATIO] [--min_prob MIN_PROB] [-n N_WORKERS]
                    fin
@@ -78,6 +84,8 @@ Available arguments (as per :code:`main.py -h`):
       --dedupe              Deduplicate based on tokenized sentences, so
                             inconsistent whitespace should be handled fairly well
                             (default: False)
+      --do_lower_case       Lower case the output. Deduplication will be based on
+                            lower case text. (default: False)
       --keep_order          Keep the same order of sentences as the source file.
                             Enabling this might be slower and consume more memory
                             when you have many/large batches. (default: False)
