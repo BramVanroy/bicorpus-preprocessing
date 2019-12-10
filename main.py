@@ -5,7 +5,8 @@ from Chunker import Chunker
 from Cleaner import Cleaner
 
 DESC = '''Preprocess a bilingual corpus by verifying the language, checking min and max sentence length
-          and the ratio between number of source and target tokens. Optionally tokenize and/or dedupe the output.'''
+          and the ratio between number of source and target tokens. Optionally tokenize, lowercase, and/or
+          dedupe the output.'''
 
 if __name__ == '__main__':
     cparser = argparse.ArgumentParser(description=DESC,

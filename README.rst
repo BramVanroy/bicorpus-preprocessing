@@ -61,7 +61,7 @@ Available arguments (as per :code:`main.py -h`):
 
     Preprocess a bilingual corpus by verifying the language, checking min and max
     sentence length and the ratio between number of source and target tokens.
-    Optionally tokenize and/or dedupe the output.
+    Optionally tokenize, lowercase, and/or dedupe the output.
 
     positional arguments:
       fin                   Input file containing tab-separated source and target
