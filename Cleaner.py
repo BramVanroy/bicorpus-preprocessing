@@ -284,6 +284,7 @@ class Cleaner:
             streams and delegates all the actual writing to _write. """
         pfin = self.chunker.pfin
         tok_suff = '.tok' if self.tokenize else ''
+        tok_suff += '.low' if self.do_lower_case else ''
         pf_src = pfin.with_suffix(f"{tok_suff}.{self.src_lang}")
         pf_tgt = pfin.with_suffix(f"{tok_suff}.{self.tgt_lang}")
 
