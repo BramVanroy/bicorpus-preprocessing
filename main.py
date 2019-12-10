@@ -22,7 +22,7 @@ if __name__ == '__main__':
                          action='store_true',
                          help='Deduplicate based on tokenized sentences, so inconsistent'
                               ' whitespace should be handled fairly well')
-    cparser.add_argument('--do_lower_Case',
+    cparser.add_argument('--do_lower_case',
                          action='store_true',
                          help='Lower case the output. Deduplication will be based on lower case text.')
     cparser.add_argument('--keep_order',
