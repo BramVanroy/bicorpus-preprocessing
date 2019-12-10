@@ -46,6 +46,7 @@ class Cleaner:
                  chunker: Chunker,
                  *,
                  dedupe: bool = False,
+                 do_lower_case: bool = False,
                  keep_order: bool = False,
                  max_length: Optional[int] = None,
                  max_ratio: Optional[int] = None,
@@ -61,6 +62,7 @@ class Cleaner:
         self.chunker = chunker
 
         self.dedupe = dedupe
+        self.do_lower_case = do_lower_case
         self.keep_order = keep_order
         self.max_length = max_length if max_length is not None else inf
         self.max_ratio = max_ratio
@@ -232,8 +234,12 @@ class Cleaner:
             src, tgt = self._check_ratio(src, tgt)
 
         # remove the 'invalid' bool: now list of tuples: (sent, tok_sent)
-        src = [(s[0], s[1]) for s in src]
-        tgt = [(s[0], s[1]) for s in tgt]
+        if self.do_lower_case:
+            src = [(s[0].lower(), s[1].lower()) for s in src]
+            tgt = [(s[0].lower(), s[1].lower()) for s in tgt]
+        else:
+            src = [(s[0], s[1]) for s in src]
+            tgt = [(s[0], s[1]) for s in tgt]
 
         return src, tgt
 
@@ -311,6 +317,7 @@ class Cleaner:
                 if not self.dedupe or (src_tup[1] not in src_tok_sents and tgt_tup[1] not in tgt_tok_sents):
                     src_sent = src_tup[1] if self.tokenize else src_tup[0]
                     tgt_sent = tgt_tup[1] if self.tokenize else tgt_tup[0]
+
                     fh_src.write(f"{src_sent}\n")
                     fh_tgt.write(f"{tgt_sent}\n")
                     n_sentences += 1
