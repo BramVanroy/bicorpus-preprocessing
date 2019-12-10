@@ -176,7 +176,7 @@ class Cleaner:
         for doc in docs:
             tokens = list(doc)
             # only count tokens that consist of alphanum chars and not only digits
-            n_valid_tokens = len([t for t in tokens if t.text.isalnum() and not t.text.isdigit])
+            n_valid_tokens = len([t for t in tokens if t.text.isalnum() and not t.text.isdigit()])
             len_valid = self.min_length <= n_valid_tokens <= self.max_length
             tokenized_sent = ' '.join([t.text for t in tokens])
 
