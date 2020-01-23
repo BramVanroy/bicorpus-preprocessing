@@ -58,8 +58,8 @@ class Cleaner:
                  sep: str = '\t',
                  src_lang: str = 'en',
                  src_model: str = 'en_core_web_sm',
-                 tgt_model: str = 'nl_core_news_sm',
                  tgt_lang: str = 'nl',
+                 tgt_model: str = 'nl_core_news_sm',
                  tokenize: bool = False):
         self.chunker = chunker
 
