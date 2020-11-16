@@ -2,6 +2,8 @@ data/
 models/
 Pipfile.lock
 .idea/
+*.bin
+*.ftz
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
